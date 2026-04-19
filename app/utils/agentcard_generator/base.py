@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
-from tools import AgentAnalyzerTools
+from .tools import AgentAnalyzerTools
 
 logger = logging.getLogger(__name__)
 

@@ -895,25 +895,33 @@ class RedisStreamListener:
             self.logger.debug(f"Cleaned up existing container: {container_name}")
 
     async def fetch_agentcard_from_local(
-        self, agent_name: str, agent_path: Path
+        self, agent_name: str, agent_path: Path, artifact_type: str = "agent"
     ) -> Dict[str, Any] | None:
         """
-        Fetch AgentCard.json from local mounted agent directory.
+        Fetch AgentCard.json (or mcp_manifest.json) from local mounted agent directory.
         Mimics the K8s worker's fetch_agentcard_from_backend but reads from local filesystem.
         """
         try:
-            # Look for Agentcard.json in the agent directory
-            agentcard_path = agent_path / "Agentcard.json"
-
-            if agentcard_path.exists():
-                self.logger.info(f"Found Agentcard.json for {agent_name}")
-                with open(agentcard_path, "r") as f:
-                    return json.load(f)
-            else:
-                self.logger.warning(
-                    f"Agentcard.json not found for {agent_name}, attempting to generate"
-                )
-                return await self.generate_agentcard(str(agent_path), agent_name)
+            # Look for manifest files in prioritize order
+            # 1. mcp_manifest.json if it's an MCP server
+            # 2. AgentCard.json (canonical casing)
+            # 3. Agentcard.json (legacy/alternate casing)
+            
+            manifest_files = ["AgentCard.json", "Agentcard.json"]
+            if artifact_type == "mcp_server":
+                manifest_files.insert(0, "mcp_manifest.json")
+                
+            for manifest_file in manifest_files:
+                manifest_path = agent_path / manifest_file
+                if manifest_path.exists():
+                    self.logger.info(f"Found {manifest_file} for {agent_name}")
+                    with open(manifest_path, "r") as f:
+                        return json.load(f)
+            
+            self.logger.warning(
+                f"No manifest file found for {agent_name}, attempting to generate (type: {artifact_type})"
+            )
+            return await self.generate_agentcard(str(agent_path), agent_name, artifact_type)
 
         except Exception as e:
             self.logger.error(
@@ -922,14 +930,15 @@ class RedisStreamListener:
             return None
 
     async def generate_agentcard(
-        self, agent_path: str, agent_name: str
+        self, agent_path: str, agent_name: str, artifact_type: str = "agent"
     ) -> Dict[str, Any] | None:
-        """Generate AgentCard using the AgentCard Generator (mimics K8s worker)"""
+        """Generate AgentCard using the appropriate Generator (mimics K8s worker)"""
         try:
-            from app.utils.agentcard_generator import AgentCardGeneratorAgent
+            # Import generator agents
+            from app.utils.agentcard_generator import AgentCardGeneratorAgent, MCPManifestGeneratorAgent
 
             self.logger.info(
-                f"Generating AgentCard for {agent_name} using AgentCard Generator"
+                f"Generating AgentCard for {agent_name} (type: {artifact_type}) using specialized generator"
             )
 
             # Check if OPENAI_API_KEY is available from config
@@ -940,8 +949,13 @@ class RedisStreamListener:
                 )
                 return None
 
-            # Initialize generator
-            generator = AgentCardGeneratorAgent(api_key=openai_key)
+            # Initialize appropriate generator
+            if artifact_type == "mcp_server":
+                self.logger.info(f"Using MCPManifestGeneratorAgent for {agent_name}")
+                generator = MCPManifestGeneratorAgent(api_key=openai_key)
+            else:
+                self.logger.info(f"Using AgentCardGeneratorAgent for {agent_name}")
+                generator = AgentCardGeneratorAgent(api_key=openai_key)
 
             # Generate AgentCard (this is a sync method, run in thread pool)
             result = await asyncio.to_thread(
@@ -973,6 +987,7 @@ class RedisStreamListener:
         owner_id: str | None,
         base_url: str,
         agent_path: Path | None = None,
+        artifact_type: str = "agent",
     ) -> bool:
         """Register or update agent in the registry via API (mimics K8s worker)"""
         try:
@@ -980,7 +995,7 @@ class RedisStreamListener:
             agentcard_data = None
             if agent_path:
                 agentcard_data = await self.fetch_agentcard_from_local(
-                    agent_name, agent_path
+                    agent_name, agent_path, artifact_type
                 )
 
             if agentcard_data:
@@ -990,6 +1005,10 @@ class RedisStreamListener:
 
                 # Use full AgentCard data (deep copy to avoid modifying original)
                 registry_data = json.loads(json.dumps(agentcard_data))
+                
+                # Make sure artifact_type is preserved or set
+                if "artifact_type" not in registry_data:
+                    registry_data["artifact_type"] = artifact_type
 
                 # Override/ensure critical local deployment fields
                 registry_data["id"] = agent_name
@@ -1011,6 +1030,7 @@ class RedisStreamListener:
                     "capabilities": {"tools": [], "prompts": []},
                     "version": "1.0.0",
                     "deployment_type": "docker-local",
+                    "artifact_type": artifact_type,
                 }
 
                 if owner_id:
@@ -1076,6 +1096,7 @@ class RedisStreamListener:
                 owner_id=owner_id,
                 base_url=base_url,
                 agent_path=agent_source_path,
+                artifact_type=artifact_type,
             )
 
             if success:

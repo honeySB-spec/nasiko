@@ -7,7 +7,7 @@ representing its capabilities (tools, resources, prompts).
 import logging
 from typing import Any, Dict, List
 
-from base import BaseGeneratorAgent
+from .base import BaseGeneratorAgent
 
 logger = logging.getLogger(__name__)
 

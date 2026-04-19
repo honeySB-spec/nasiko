@@ -107,12 +107,15 @@ class AgentCardService:
             agentcard_path = Path(agent_path) / "AgentCard.json"
 
             if not agentcard_path.exists():
-                mcp_path = Path(agent_path) / "mcp_manifest.json"
-                if mcp_path.exists():
-                    agentcard_path = mcp_path
-                else:
-                    self.logger.warning(f"Manifest not found in {agent_path}")
-                    return None
+                # Fallback to legacy case or MCP manifest
+                agentcard_path = Path(agent_path) / "Agentcard.json"
+                if not agentcard_path.exists():
+                    mcp_path = Path(agent_path) / "mcp_manifest.json"
+                    if mcp_path.exists():
+                        agentcard_path = mcp_path
+                    else:
+                        self.logger.warning(f"Manifest not found in {agent_path}")
+                        return None
 
             with open(agentcard_path, "r") as f:
                 agentcard = json.load(f)

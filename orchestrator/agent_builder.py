@@ -287,8 +287,12 @@ class AgentBuilder:
         
         # Determine if it's an MCP server
         is_mcp = False
-        # Try both casing
-        card_paths = [agent_path / "AgentCard.json", agent_path / "Agentcard.json"]
+        # Try both names and casings
+        card_paths = [
+            agent_path / "mcp_manifest.json", 
+            agent_path / "AgentCard.json", 
+            agent_path / "Agentcard.json"
+        ]
         for cp in card_paths:
             if cp.exists():
                 try:
