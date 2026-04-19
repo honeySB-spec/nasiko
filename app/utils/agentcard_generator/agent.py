@@ -3,24 +3,16 @@ AgentCard Generator Agent
 Uses LLM to decide which tools to use and how to analyze agent code
 """
 
-import json
 import logging
-import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-# from dotenv import load_dotenv
-from openai import OpenAI
-
-sys.path.insert(0, str(Path(__file__).parent))
-
-from tools import AgentAnalyzerTools
+from base import BaseGeneratorAgent
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCardGeneratorAgent:
+class AgentCardGeneratorAgent(BaseGeneratorAgent):
     """
     An agent that generates AgentCards by analyzing code,
     similar to how Claude Code works.
@@ -37,38 +29,21 @@ class AgentCardGeneratorAgent:
         Initialize the agent
 
         Args:
-            api_key: OpenAI API key or MiniMax API key (or set OPENAI_API_KEY / MINIMAX_API_KEY env var)
+            api_key: OpenAI-compatible API key
             model: Model to use for reasoning
-            base_url: Custom base URL for OpenAI-compatible APIs (e.g., MiniMax)
+            n8n_agent: Whether to generate AgentCard for n8n workflow
+            base_url: Custom base URL for the API
         """
-        # load_dotenv()
-        self.api_key = (
-            api_key or os.getenv("OPENAI_API_KEY") or os.getenv("MINIMAX_API_KEY")
-        )
-        if not self.api_key:
-            logger.error(
-                "Neither OPENAI_API_KEY nor MINIMAX_API_KEY found in environment or arguments"
-            )
-            raise ValueError("OPENAI_API_KEY or MINIMAX_API_KEY must be set")
-
-        # Auto-detect MiniMax provider
-        if (
-            not base_url
-            and not api_key
-            and not os.getenv("OPENAI_API_KEY")
-            and os.getenv("MINIMAX_API_KEY")
-        ):
-            base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
-            if model == "gpt-4o":
-                model = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7")
-
-        logger.info(f"Initializing AgentCardGeneratorAgent with model: {model}")
-        self.client = OpenAI(api_key=self.api_key, base_url=base_url)
-        self.model = model
-        self.tools = AgentAnalyzerTools()
-        self.max_iterations = 10
+        super().__init__(api_key=api_key, model=model, base_url=base_url)
         self.n8n_agent = n8n_agent
-        logger.debug(f"Agent initialized with max_iterations={self.max_iterations}")
+        logger.debug(f"Agent initialized with n8n_agent={self.n8n_agent}")
+
+    def _get_user_message(self, agent_path: str) -> str:
+        if self.n8n_agent:
+            n8n_workflow_path = str(Path(agent_path) / "n8n_workflow.json")
+            return f"Generate an A2A-compliant AgentCard for the n8n workflow at: {n8n_workflow_path}. If the file is not found, use glob_files to search for *.json files in the directory: {agent_path}"
+        else:
+            return f"Generate an A2A-compliant AgentCard for the agent at: {agent_path}"
 
     def _get_system_prompt(self) -> str:
         """System prompt that instructs the LLM how to generate agent card"""
@@ -604,168 +579,3 @@ IMPORTANT:
                 },
             },
         ]
-
-    def _execute_tool(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Execute a tool and return result"""
-        logger.debug(f"Executing tool: {tool_name} with args: {arguments}")
-        if hasattr(self.tools, tool_name):
-            method = getattr(self.tools, tool_name)
-            result = method(**arguments)
-            logger.debug(f"Tool {tool_name} result status: {result.get('status')}")
-            return result
-        else:
-            logger.error(f"Tool '{tool_name}' not found")
-            return {"status": "error", "message": f"Tool '{tool_name}' not found"}
-
-    def generate_agentcard(
-        self, agent_path: str, verbose: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Generate AgentCard for an agent by analyzing its code or n8n workflow
-
-        Args:
-            agent_path: Path to the agent directory
-            verbose: Whether to print detailed progress
-
-        Returns:
-            Dictionary with generated AgentCard and metadata
-        """
-        # Determine user message based on agent type
-        # success_tool_name is always generate_agentcard_json for both cases
-        success_tool_name = "generate_agentcard_json"
-
-        if self.n8n_agent:
-            n8n_workflow_path = str(Path(agent_path) / "n8n_workflow.json")
-            logger.info(
-                f"Starting AgentCard generation from n8n workflow: {n8n_workflow_path}"
-            )
-            user_message = f"Generate an A2A-compliant AgentCard for the n8n workflow at: {n8n_workflow_path}. If the file is not found, use glob_files to search for *.json files in the directory: {agent_path}"
-        else:
-            logger.info(f"Starting AgentCard generation for: {agent_path}")
-            user_message = (
-                f"Generate an A2A-compliant AgentCard for the agent at: {agent_path}"
-            )
-
-        messages = [
-            {"role": "system", "content": self._get_system_prompt()},
-            {"role": "user", "content": user_message},
-        ]
-
-        iteration = 0
-        final_agentcard = None
-
-        while iteration < self.max_iterations:
-            iteration += 1
-            logger.debug(f"Starting iteration {iteration}/{self.max_iterations}")
-
-            if verbose:
-                print(f"\n[Iteration {iteration}]")
-
-            try:
-                logger.debug(f"Calling LLM with {len(messages)} messages")
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=self._get_tool_schemas(),
-                    tool_choice="auto",
-                    temperature=0.1,
-                    max_tokens=4000,
-                )
-
-                message = response.choices[0].message
-                logger.debug(
-                    f"LLM response received with {len(message.tool_calls or [])} tool calls"
-                )
-
-                assistant_message = {
-                    "role": "assistant",
-                    "content": message.content or "",
-                }
-                if message.tool_calls:
-                    assistant_message["tool_calls"] = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in message.tool_calls
-                    ]
-                messages.append(assistant_message)
-
-                if verbose and message.content:
-                    print(f"Agent: {message.content}")
-
-                if message.tool_calls:
-                    for tool_call in message.tool_calls:
-                        tool_name = tool_call.function.name
-                        arguments = json.loads(tool_call.function.arguments)
-
-                        logger.info(f"Tool call: {tool_name}")
-                        if verbose:
-                            print(f"  → Calling tool: {tool_name}")
-                            print(f"    Arguments: {json.dumps(arguments, indent=2)}")
-
-                        result = self._execute_tool(tool_name, arguments)
-
-                        if verbose:
-                            if (
-                                isinstance(result, dict)
-                                and result.get("status") == "success"
-                            ):
-                                print(f"    ✓ {result.get('message', 'Success')}")
-                            else:
-                                print(f"    ✗ {result.get('message', 'Error')}")
-
-                        if (
-                            tool_name == success_tool_name
-                            and result.get("status") == "success"
-                        ):
-                            final_agentcard = result.get("agentcard")
-                            logger.info("AgentCard JSON successfully generated")
-
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps(result),
-                            }
-                        )
-
-                    continue
-
-                logger.info(f"Agent finished after {iteration} iterations")
-                if verbose:
-                    print("\n[Agent finished]")
-
-                break
-
-            except Exception as e:
-                logger.exception(
-                    f"Error during execution at iteration {iteration}: {e}"
-                )
-                return {
-                    "status": "error",
-                    "message": f"Error during execution: {str(e)}",
-                    "agentcard": None,
-                }
-
-        if iteration >= self.max_iterations:
-            logger.warning(f"Maximum iterations ({self.max_iterations}) reached")
-            return {
-                "status": "error",
-                "message": "Maximum iterations reached",
-                "agentcard": final_agentcard,
-            }
-
-        logger.info("AgentCard generation completed successfully")
-        return {
-            "status": "success",
-            "message": "AgentCard generated successfully",
-            "agentcard": final_agentcard,
-            "iterations": iteration,
-        }

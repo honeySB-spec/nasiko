@@ -107,3 +107,38 @@ def registry_get(
     from commands.registry import get_agent_command
 
     get_agent_command(identifier, by_name, by_agent_id, format_type)
+
+
+@agent_app.command(name="connect-mcp")
+def connect_mcp(
+    agent_id: str = typer.Argument(..., help="Agent ID to connect MCP servers to"),
+    mcp_server_ids: list[str] = typer.Argument(
+        ..., help="One or more MCP server IDs to connect"
+    ),
+):
+    """Associate MCP servers with an existing agent."""
+    from commands.connect_mcp import connect_mcp_command
+
+    connect_mcp_command(agent_id, mcp_server_ids)
+
+
+@agent_app.command(name="list-mcp")
+def list_mcp(
+    agent_id: str = typer.Argument(
+        ..., help="Agent ID to get connected MCP servers for"
+    ),
+):
+    """List all MCP servers connected to an agent."""
+    from commands.connect_mcp import get_connected_mcp_command
+
+    get_connected_mcp_command(agent_id)
+
+
+@agent_app.command(name="disconnect-mcp")
+def disconnect_mcp(
+    agent_id: str = typer.Argument(..., help="Agent ID to disconnect all MCP servers from"),
+):
+    """Disconnect all MCP servers from an agent."""
+    from commands.connect_mcp import disconnect_mcp_command
+
+    disconnect_mcp_command(agent_id)

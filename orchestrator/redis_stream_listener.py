@@ -161,6 +161,7 @@ class RedisStreamListener:
             owner_id = fields.get("owner_id")
             upload_id = fields.get("upload_id")
             upload_type = fields.get("upload_type")
+            artifact_type = fields.get("artifact_type", "agent")
 
             if not all([command, agent_name]):
                 self.logger.error(
@@ -205,6 +206,7 @@ class RedisStreamListener:
                     upload_id,
                     upload_type,
                     agent_path,
+                    artifact_type=artifact_type,
                 )
             else:
                 self.logger.warning(f"Unknown command: {command}")
@@ -453,6 +455,7 @@ class RedisStreamListener:
         upload_id: Optional[str] = None,
         upload_type: Optional[str] = None,
         agent_path: Optional[str] = None,
+        artifact_type: str = "agent",
     ):
         """Handle both agent deployment and updates from mounted agents folder"""
 
@@ -475,6 +478,9 @@ class RedisStreamListener:
 
             if not agent_source_path.is_dir():
                 raise ValueError(f"Agent path is not a directory: {agent_source_path}")
+
+            # Step 1.5: Verify and generate MCP server bridge if needed
+            self._ensure_mcp_configs(agent_source_path, agent_name)
 
             # Verify required files exist
             dockerfile_path = agent_source_path / "Dockerfile"
@@ -520,6 +526,7 @@ class RedisStreamListener:
                 owner_id,
                 upload_type,
                 agent_source_path=agent_source_path,
+                artifact_type=artifact_type,
             )
 
             # Step 5: Update agent registry via backend API
@@ -533,7 +540,7 @@ class RedisStreamListener:
                 90,
             )
             registry_result = await self._update_agent_registry_with_path(
-                agent_name, deployment_result, owner_id, base_url, agent_source_path
+                agent_name, deployment_result, owner_id, base_url, agent_source_path, artifact_type
             )
 
             # Step 5.5: Create Agent Permissions (if registry was updated and owner_id is provided)
@@ -559,7 +566,8 @@ class RedisStreamListener:
             container_name = deployment_result.get(
                 "container_name", f"agent-{agent_name}"
             )
-            external_url = f"{Config.KONG_GATEWAY_URL}/agents/{container_name}"
+            prefix = "mcp" if artifact_type == "mcp_server" else "agents"
+            external_url = f"{Config.KONG_GATEWAY_URL}/{prefix}/{container_name}"
 
             await self._update_status(
                 agent_name,
@@ -578,7 +586,7 @@ class RedisStreamListener:
             )
 
             self.logger.info(
-                f"Successfully {command}ed agent '{agent_name}' at {external_url}"
+                f"Successfully {command}ed {artifact_type} '{agent_name}' at {external_url}"
             )
 
         except Exception as e:
@@ -617,6 +625,10 @@ class RedisStreamListener:
             self.logger.warning(f"Agentcard.json not found in {agent_path}")
 
         return agent_path
+
+    def _ensure_mcp_configs(self, agent_path: Path, agent_name: str):
+        """Generate MCP stdio-to-HTTP bridge and Docker configs if it is an MCP server"""
+        return self.agent_builder._ensure_mcp_configs(agent_path, agent_name)
 
     async def _stop_existing_agent(self, agent_name: str):
         """Stop existing agent for update"""
@@ -763,13 +775,14 @@ class RedisStreamListener:
         upload_type: Optional[str] = None,
         webhook_url: Optional[str] = None,
         agent_source_path: Optional[Path] = None,
+        artifact_type: str = "agent",
     ) -> dict:
         """Deploy agent container with proper networking"""
 
         # Stop and remove existing container if it exists
         await self._cleanup_existing_container(agent_name)
 
-        container_name = f"agent-{agent_name}"
+        container_name = f"{'mcp' if artifact_type == 'mcp_server' else 'agent'}-{agent_name}"
 
         # Prepare environment variables like K8s worker
         env_vars = {
@@ -813,6 +826,8 @@ class RedisStreamListener:
             Config.APP_NETWORK,  # Also join app network for observability access
             "--restart",
             "unless-stopped",
+            "--label", f"nasiko.artifact_type={artifact_type}",
+            "--label", f"nasiko.agent_name={agent_name}",
         ]
 
         # Add all environment variables to the command
@@ -845,28 +860,39 @@ class RedisStreamListener:
         }
 
     async def _cleanup_existing_container(self, agent_name: str):
-        """Stop and remove existing container if it exists"""
-        container_name = f"agent-{agent_name}"
+        """Stop and remove existing container if it exists (checks both agent- and mcp- prefixes)"""
+        for prefix in ["agent", "mcp"]:
+            container_name = f"{prefix}-{agent_name}"
+            
+            # Check if container exists
+            process = await asyncio.create_subprocess_exec(
+                "docker", "ps", "-a", "--filter", f"name=^{container_name}$", "--format", "{{.Names}}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await process.communicate()
+            if not stdout.decode().strip():
+                continue
 
-        # Stop container
-        await asyncio.create_subprocess_exec(
-            "docker",
-            "stop",
-            container_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-
-        # Remove container
-        await asyncio.create_subprocess_exec(
-            "docker",
-            "rm",
-            container_name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-
-        self.logger.debug(f"Cleaned up existing container: {container_name}")
+            # Stop container
+            await asyncio.create_subprocess_exec(
+                "docker",
+                "stop",
+                container_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+    
+            # Remove container
+            await asyncio.create_subprocess_exec(
+                "docker",
+                "rm",
+                container_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+    
+            self.logger.debug(f"Cleaned up existing container: {container_name}")
 
     async def fetch_agentcard_from_local(
         self, agent_name: str, agent_path: Path
@@ -1029,15 +1055,19 @@ class RedisStreamListener:
         owner_id: str,
         base_url: str,
         agent_source_path: Path,
+        artifact_type: str = "agent",
     ) -> dict:
         """Update agent registry via backend API using new AgentCard-based registration"""
         try:
             # For local deployment, use Kong gateway URL like K8s worker does
             # Kong gateway runs at port 9100 for local deployment
+            prefix = "mcp" if artifact_type == "mcp_server" else "agent"
             container_name = deployment_result.get(
-                "container_name", f"agent-{agent_name}"
+                "container_name", f"{prefix}-{agent_name}"
             )
-            gateway_url = f"{Config.KONG_GATEWAY_URL}/agents/{container_name}"
+            
+            route_prefix = "mcp" if artifact_type == "mcp_server" else "agents"
+            gateway_url = f"{Config.KONG_GATEWAY_URL}/{route_prefix}/{container_name}"
 
             # Use the new registry registration method with the actual agent source path
             success = await self.register_agent_in_registry(

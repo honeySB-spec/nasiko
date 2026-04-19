@@ -459,7 +459,7 @@ requires-dist = [
     { name = "langchain", specifier = ">=0.3.27" },
     { name = "langchain-community", specifier = ">=0.3.27" },
     { name = "langchain-openai", specifier = ">=0.3.29" },
-    { name = "langtrace-python-sdk", specifier = ">=3.8.21" },
+    { name = "langtrace-python-sdk" },
     { name = "motor", specifier = "==3.5.1" },
     { name = "nltk", specifier = ">=3.9.1" },
     { name = "numexpr", specifier = ">=2.11.0" },

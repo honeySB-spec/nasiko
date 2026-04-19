@@ -24,6 +24,8 @@ class RegistryItemResponse(BaseModel):
     skills: List[Dict[str, Any]] = []
     defaultInputModes: List[str] = []
     defaultOutputModes: List[str] = []
+    artifact_type: str = "agent"
+    connected_mcp_servers: List[str] = []
 
 
 class RegistryResponse(BaseModel):
@@ -55,6 +57,8 @@ class RegistryItemDetailResponse(BaseModel):
     additionalInterfaces: Optional[List[Dict[str, str]]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    artifact_type: str = "agent"
+    connected_mcp_servers: List[str] = []
 
 
 class RegistrySingleResponse(BaseModel):
@@ -128,6 +132,7 @@ class AgentUploadItemResponse(BaseModel):
     orchestration_triggered: bool
     validation_errors: Optional[List[str]] = None
     version: Optional[str] = None
+    artifact_type: str = "agent"
 
 
 class AgentUploadResponse(BaseModel):
@@ -226,6 +231,7 @@ class UploadStatusItemResponse(BaseModel):
     completed_at: Optional[str] = None
     processing_duration: Optional[float] = None
     orchestration_duration: Optional[float] = None
+    artifact_type: str = "agent"
 
 
 class UploadStatusResponse(BaseModel):
@@ -330,6 +336,8 @@ class UserAgentItemResponse(BaseModel):
     upload_id: Optional[str] = None  # Only for uploaded agents
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    artifact_type: str = "agent"
+    connected_mcp_servers: List[str] = []
 
 
 class UserAgentsResponse(BaseModel):
@@ -351,6 +359,7 @@ class SimpleUserUploadAgentResponse(BaseModel):
     upload_info: UploadInfoResponse
     tags: List[str] = []
     description: Optional[str] = None
+    artifact_type: str = "agent"
 
 
 class SimpleUserAgentResponse(BaseModel):
@@ -359,6 +368,12 @@ class SimpleUserAgentResponse(BaseModel):
     icon_url: Optional[str] = None
     tags: List[str] = []
     description: Optional[str] = None
+    artifact_type: str = "agent"
+    connected_mcp_servers: List[str] = []
+
+
+class MCPAssociationRequest(BaseModel):
+    mcp_server_ids: List[str]  # List of MCP server registry IDs to connect
 
 
 class SimpleUserUploadAgentsResponse(BaseModel):
@@ -393,6 +408,7 @@ class AgentSearchResult(BaseModel):
     owner_id: Optional[str] = None
     version: Optional[str] = None
     score: Optional[float] = None
+    artifact_type: str = "agent"
 
 
 class UserSearchResponse(BaseModel):

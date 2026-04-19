@@ -204,14 +204,15 @@ def get_k8s_services() -> List[ServiceInfo]:
                     logger.warning(f"Service {service_name} has no ports defined")
                     continue
 
-                # Use service DNS name for internal cluster communication
-                service_host = f"{service_name}.{AGENTS_NAMESPACE}.svc.cluster.local"
+                # Determine route prefix based on labels or service name
+                artifact_type = svc.metadata.labels.get("nasiko.artifact_type", "agent")
+                route_prefix = "mcp" if artifact_type == "mcp_server" else "agents"
 
                 service_info = ServiceInfo(
                     name=service_name,
                     host=service_host,
                     port=service_port,
-                    path=f"/agents/{service_name}",
+                    path=f"/{route_prefix}/{service_name}",
                     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
                     namespace=AGENTS_NAMESPACE,
                 )
@@ -287,10 +288,18 @@ def get_docker_services() -> List[ServiceInfo]:
                     logger.debug(f"Skipping infrastructure container: {container_name}")
                     continue
 
-                # Only consider agent containers (those that start with 'agent-')
-                if not container_name.startswith("agent-"):
-                    logger.debug(f"Skipping non-agent container: {container_name}")
+                # Detect artifact type from labels
+                artifact_type = container.labels.get("nasiko.artifact_type")
+                
+                # Only consider agent containers (those that start with 'agent-' or have the nasiko label)
+                if not artifact_type and not container_name.startswith("agent-") and not container_name.startswith("mcp-"):
+                    logger.debug(f"Skipping non-agent/mcp container: {container_name}")
                     continue
+                
+                if not artifact_type:
+                    artifact_type = "mcp_server" if container_name.startswith("mcp-") else "agent"
+                
+                route_prefix = "mcp" if artifact_type == "mcp_server" else "agents"
 
                 # For Docker containers on the same network, we don't need exposed ports
                 # We can communicate directly using container name and internal port
@@ -307,7 +316,7 @@ def get_docker_services() -> List[ServiceInfo]:
                     name=container_name,
                     host=service_host,
                     port=service_port,
-                    path=f"/agents/{container_name}",
+                    path=f"/{route_prefix}/{container_name}",
                     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
                     namespace="docker-agents",  # Use a different namespace for Docker containers
                 )

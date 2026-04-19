@@ -432,3 +432,111 @@ class Service:
                 f"SERVICE: Error deleting upload records for {agent_id}: {e}"
             )
             return 0
+
+    async def connect_mcp_servers(
+        self, agent_id: str, mcp_server_ids: List[str]
+    ) -> Dict:
+        """Connect MCP servers to an agent.
+        
+        Validates that:
+        1. The agent exists and is an agent (not an MCP server itself)
+        2. Each MCP server ID exists in the registry
+        3. Each MCP server has artifact_type == 'mcp_server'
+        """
+        try:
+            self.logger.info(
+                f"SERVICE: Connecting MCP servers {mcp_server_ids} to agent {agent_id}"
+            )
+
+            # Validate the agent exists
+            agent = await self.repo.get_registry_by_agent_id(agent_id)
+            if not agent:
+                raise ValueError(f"Agent '{agent_id}' not found in registry")
+
+            # Verify it's an agent, not an MCP server
+            if agent.get("artifact_type") == "mcp_server":
+                raise ValueError(
+                    f"Cannot connect MCP servers to '{agent_id}' because it is itself an MCP server"
+                )
+
+            # Validate each MCP server exists and is an MCP server
+            validated_servers = []
+            errors = []
+            for mcp_id in mcp_server_ids:
+                mcp_entry = await self.repo.get_registry_by_agent_id(mcp_id)
+                if not mcp_entry:
+                    errors.append(f"MCP server '{mcp_id}' not found in registry")
+                    continue
+                if mcp_entry.get("artifact_type") != "mcp_server":
+                    errors.append(
+                        f"'{mcp_id}' is not an MCP server (artifact_type={mcp_entry.get('artifact_type')})"
+                    )
+                    continue
+                validated_servers.append(mcp_id)
+
+            if errors:
+                raise ValueError(
+                    f"Validation errors: {'; '.join(errors)}"
+                )
+
+            # Update the agent's connected_mcp_servers in the database
+            updated = await self.repo.update_connected_mcp_servers(
+                agent_id, validated_servers
+            )
+
+            if not updated:
+                raise Exception(
+                    f"Failed to update connected MCP servers for agent {agent_id}"
+                )
+
+            self.logger.info(
+                f"SERVICE: Successfully connected {len(validated_servers)} MCP servers to agent {agent_id}"
+            )
+
+            return {
+                "agent_id": agent_id,
+                "connected_mcp_servers": validated_servers,
+                "count": len(validated_servers),
+            }
+
+        except ValueError:
+            raise
+        except Exception as e:
+            self.logger.error(
+                f"SERVICE: Error connecting MCP servers to agent {agent_id}: {str(e)}"
+            )
+            raise
+
+    async def get_connected_mcp_servers(self, agent_id: str) -> List[Dict]:
+        """Get details of MCP servers connected to an agent"""
+        try:
+            agent = await self.repo.get_registry_by_agent_id(agent_id)
+            if not agent:
+                raise ValueError(f"Agent '{agent_id}' not found in registry")
+
+            mcp_server_ids = agent.get("connected_mcp_servers", [])
+            if not mcp_server_ids:
+                return []
+
+            mcp_servers = []
+            for mcp_id in mcp_server_ids:
+                mcp_entry = await self.repo.get_registry_by_agent_id(mcp_id)
+                if mcp_entry:
+                    mcp_servers.append({
+                        "id": mcp_entry.get("id"),
+                        "name": mcp_entry.get("name"),
+                        "description": mcp_entry.get("description", ""),
+                        "url": mcp_entry.get("url", ""),
+                        "artifact_type": mcp_entry.get("artifact_type", "mcp_server"),
+                        "skills": mcp_entry.get("skills", []),
+                    })
+
+            return mcp_servers
+
+        except ValueError:
+            raise
+        except Exception as e:
+            self.logger.error(
+                f"SERVICE: Error getting connected MCP servers for agent {agent_id}: {str(e)}"
+            )
+            raise

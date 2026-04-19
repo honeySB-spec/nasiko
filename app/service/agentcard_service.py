@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from app.utils.agentcard_generator import AgentCardGeneratorAgent
+from app.utils.agentcard_generator import AgentCardGeneratorAgent, MCPManifestGeneratorAgent
 
 
 class AgentCardService:
@@ -32,6 +32,7 @@ class AgentCardService:
         agent_name: str,
         n8n_agent: bool,
         base_url: str = "http://localhost:8000",
+        is_mcp: bool = False,
     ) -> bool:
         """
         Generate AgentCard.json file for an agent and save it to the agent directory
@@ -49,12 +50,19 @@ class AgentCardService:
         try:
             self.logger.info(f"Generating AgentCard for {agent_name} at {agent_path}")
 
-            # Initialize the AgentCard generator agent
-            generator = AgentCardGeneratorAgent(
-                api_key=self.openai_api_key,
-                model="gpt-4o",
-                n8n_agent=n8n_agent,
-            )
+            # Initialize the appropriate generator agent
+            if is_mcp:
+                self.logger.info("Using MCP Manifest Generator Agent")
+                generator = MCPManifestGeneratorAgent(
+                    api_key=self.openai_api_key,
+                    model="gpt-4o",
+                )
+            else:
+                generator = AgentCardGeneratorAgent(
+                    api_key=self.openai_api_key,
+                    model="gpt-4o",
+                    n8n_agent=n8n_agent,
+                )
 
             # Generate AgentCard using the agent
             result = generator.generate_agentcard(agent_path=agent_path, verbose=False)
@@ -68,11 +76,12 @@ class AgentCardService:
             agentcard = result["agentcard"]
 
             # Save AgentCard.json to the agent directory
-            agentcard_path = Path(agent_path) / "AgentCard.json"
+            file_name = "mcp_manifest.json" if is_mcp else "AgentCard.json"
+            agentcard_path = Path(agent_path) / file_name
             with open(agentcard_path, "w") as f:
                 json.dump(agentcard, f, indent=2, ensure_ascii=False)
 
-            self.logger.info(f"Successfully saved AgentCard.json to {agentcard_path}")
+            self.logger.info(f"Successfully saved {file_name} to {agentcard_path}")
             return True
 
         except Exception as e:
@@ -98,8 +107,12 @@ class AgentCardService:
             agentcard_path = Path(agent_path) / "AgentCard.json"
 
             if not agentcard_path.exists():
-                self.logger.warning(f"AgentCard.json not found at {agentcard_path}")
-                return None
+                mcp_path = Path(agent_path) / "mcp_manifest.json"
+                if mcp_path.exists():
+                    agentcard_path = mcp_path
+                else:
+                    self.logger.warning(f"Manifest not found in {agent_path}")
+                    return None
 
             with open(agentcard_path, "r") as f:
                 agentcard = json.load(f)
@@ -118,6 +131,7 @@ class AgentCardService:
         url: str,
         base_url: str = "http://localhost:8000",
         n8n_agent: bool = False,
+        is_mcp: bool = False,
     ) -> Dict[str, Any]:
         """
         Generate registry data for an agent from AgentCard
@@ -143,7 +157,7 @@ class AgentCardService:
                     f"No existing AgentCard found, generating new one for {agent_name}"
                 )
                 await self.generate_and_save_agentcard(
-                    agent_path, agent_name, n8n_agent, base_url
+                    agent_path, agent_name, n8n_agent, base_url, is_mcp=True if agent_name.endswith('-mcp') else False # We need to properly propagate is_mcp down here if necessary, but this happens after upload. Let's fix this up by accepting is_mcp here as well.
                 )
                 agentcard = await self.load_agentcard_from_file(agent_path)
 

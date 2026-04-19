@@ -30,6 +30,7 @@ class ObservabilityConfig:
             "arize-phoenix>=12.0.0",
             "openinference-instrumentation-openai>=0.1.40",
             "openinference-instrumentation-langchain>=0.1.57",
+            "openinference-instrumentation-mcp>=0.1.0",
             "opentelemetry-api>=1.36.0",
             "opentelemetry-sdk>=1.36.0",
             "opentelemetry-exporter-otlp>=1.36.0",

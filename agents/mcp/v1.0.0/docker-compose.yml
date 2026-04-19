@@ -1,0 +1,8 @@
+services:
+  mcp-server:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - LOG_LEVEL=INFO
+    restart: unless-stopped

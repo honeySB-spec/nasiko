@@ -81,6 +81,12 @@ class RegistryBase(BaseModel):
     # Owner information
     owner_id: str
 
+    # Artifact type (agent or mcp_server)
+    artifact_type: str = "agent"
+
+    # Connected MCP server IDs (registry IDs of artifact_type="mcp_server")
+    connected_mcp_servers: List[str] = []
+
     # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

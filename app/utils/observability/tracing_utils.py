@@ -130,6 +130,14 @@ def _get_instrumentors_for_framework(framework: Optional[str]) -> list:
             ("openinference.instrumentation.openai", "OpenAIInstrumentor"),
         ],
         "minimax": [("openinference.instrumentation.openai", "OpenAIInstrumentor")],
+        "mcp": [
+            ("openinference.instrumentation.mcp", "McpServerInstrumentor"),
+            ("openinference.instrumentation.openai", "OpenAIInstrumentor"),
+        ],
+        "fastmcp": [
+            ("openinference.instrumentation.mcp", "McpServerInstrumentor"),
+            ("openinference.instrumentation.openai", "OpenAIInstrumentor"),
+        ],
         "custom": [("openinference.instrumentation.openai", "OpenAIInstrumentor")],
     }
 

@@ -228,10 +228,22 @@ class AgentBuilder:
         compose_path = agent_folder / "docker-compose.yml"
 
         if not compose_path.exists():
-            logger.error(
-                f"No docker-compose.yml found for {agent_folder_name}, skipping..."
-            )
-            return False
+            # Check if this could be an MCP agent
+            agentcard_path = agent_folder / "AgentCard.json"
+            if agentcard_path.exists():
+                try:
+                    with open(agentcard_path, "r") as fac:
+                        ac = yaml.safe_load(fac)
+                        if ac.get("agentFramework", "").lower() in ("mcp", "fastmcp", "mcp_server"):
+                            logger.info("MCP framework detected. Will auto-generate missing docker-compose.")
+                            self._ensure_mcp_configs(agent_folder, agent_folder_name)
+                except Exception as e:
+                    logger.error(f"Failed to read AgentCard.json while checking for MCP framework: {e}")
+            if not compose_path.exists():
+                logger.error(
+                    f"No docker-compose.yml found for {agent_folder_name}, skipping..."
+                )
+                return False
 
         # Validate docker-compose.yml has valid structure and container names
         try:
@@ -269,6 +281,189 @@ class AgentBuilder:
                 f"Error reading docker-compose.yml for {agent_folder_name}: {e}, skipping..."
             )
             return False
+    def _ensure_mcp_configs(self, agent_path: Path, agent_name: str):
+        """Generate MCP stdio-to-HTTP bridge and Docker configs if it is an MCP server"""
+        from textwrap import dedent
+        
+        # Determine if it's an MCP server
+        is_mcp = False
+        # Try both casing
+        card_paths = [agent_path / "AgentCard.json", agent_path / "Agentcard.json"]
+        for cp in card_paths:
+            if cp.exists():
+                try:
+                    import json
+                    with open(cp, "r") as f:
+                        ac = json.load(f)
+                    framework = ac.get("agentFramework", "").lower()
+                    if framework in ("mcp", "fastmcp", "mcp_server", "mcp-server"):
+                        is_mcp = True
+                        break
+                except:
+                    # Try yaml if json fails
+                    try:
+                        import yaml
+                        with open(cp, "r") as f:
+                            ac = yaml.safe_load(f)
+                        framework = ac.get("agentFramework", "").lower()
+                        if framework in ("mcp", "fastmcp", "mcp_server", "mcp-server"):
+                            is_mcp = True
+                            break
+                    except:
+                        pass
+        
+        if not is_mcp:
+            return
+
+        bridge_path = agent_path / "mcp_bridge.py"
+        dockerfile_path = agent_path / "Dockerfile"
+        compose_path = agent_path / "docker-compose.yml"
+        
+        if not bridge_path.exists():
+            # Robust JSON-RPC bridge that proxies between SSE and Stdio
+            bridge_path.write_text(dedent("""\
+                import asyncio
+                import json
+                import os
+                import sys
+                import logging
+                from typing import Optional
+                from fastapi import FastAPI, Request
+                from fastapi.responses import JSONResponse
+                from sse_starlette.sse import EventSourceResponse
+                import uvicorn
+
+                # Configure logging
+                logging.basicConfig(level=logging.INFO)
+                logger = logging.getLogger("mcp-bridge")
+
+                app = FastAPI(title="MCP HTTP Bridge")
+
+                # Configuration for the target stdio server
+                # Default to 'python src/main.py' if not specified
+                # We assume the server entry point is src/main.py or specified by MCP_TARGET_CMD
+                TARGET_CMD = os.environ.get("MCP_TARGET_CMD", "python src/main.py")
+
+                class StdioProxy:
+                    def __init__(self, cmd_string):
+                        self.cmd_string = cmd_string
+                        self.process: Optional[asyncio.subprocess.Process] = None
+                        self.queue = asyncio.Queue()
+                        self.read_task = None
+
+                    async def start(self):
+                        logger.info(f"Starting target MCP server: {self.cmd_string}")
+                        try:
+                            self.process = await asyncio.create_subprocess_shell(
+                                self.cmd_string,
+                                stdin=asyncio.subprocess.PIPE,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            self.read_task = asyncio.create_task(self._read_stdout())
+                            asyncio.create_task(self._read_stderr())
+                        except Exception as e:
+                            logger.error(f"Failed to start target MCP server: {e}")
+                            raise
+
+                    async def _read_stdout(self):
+                        try:
+                            while True:
+                                line = await self.process.stdout.readline()
+                                if not line:
+                                    logger.info("Target MCP server stdout closed")
+                                    break
+                                await self.queue.put(line.decode())
+                        except Exception as e:
+                            logger.error(f"Error reading stdout: {e}")
+
+                    async def _read_stderr(self):
+                        try:
+                            while True:
+                                line = await self.process.stderr.readline()
+                                if not line:
+                                    break
+                                logger.warning(f"Target STDERR: {line.decode().strip()}")
+                        except Exception as e:
+                            logger.error(f"Error reading stderr: {e}")
+
+                    async def send(self, data: str):
+                        if not self.process or not self.process.stdin:
+                            logger.error("Process not started or stdin not available")
+                            return
+                        self.process.stdin.write(data.encode() + b"\\n")
+                        await self.process.stdin.drain()
+
+                proxy = StdioProxy(TARGET_CMD)
+
+                @app.on_event("startup")
+                async def startup():
+                    await proxy.start()
+
+                @app.get("/sse")
+                async def sse_endpoint(request: Request):
+                    async def event_publisher():
+                        try:
+                            while True:
+                                if await request.is_disconnected():
+                                    break
+                                try:
+                                    # Wait for data from the queue (from stdio stdout)
+                                    data = await asyncio.wait_for(proxy.queue.get(), timeout=1.0)
+                                    yield {"data": data.strip()}
+                                except asyncio.TimeoutError:
+                                    # Keepalive comment
+                                    yield {"comment": "keepalive"}
+                        except Exception as e:
+                            logger.error(f"SSE Error: {e}")
+
+                    return EventSourceResponse(event_publisher())
+
+                @app.post("/messages")
+                async def messages_endpoint(request: Request):
+                    try:
+                        data = await request.body()
+                        await proxy.send(data.decode())
+                        return JSONResponse({"status": "ok"})
+                    except Exception as e:
+                        logger.error(f"Error sending message to stdio: {e}")
+                        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+
+                if __name__ == "__main__":
+                    port = int(os.environ.get("PORT", 8000))
+                    uvicorn.run(app, host="0.0.0.0", port=port)
+            """))
+            logger.info("Generated robust JSON-RPC bridge (mcp_bridge.py)")
+        
+        if not dockerfile_path.exists() or "mcp_bridge" not in dockerfile_path.read_text():
+            dockerfile_path.write_text(dedent("""\
+                FROM python:3.11-slim
+                WORKDIR /app
+                COPY . .
+                RUN pip install fastapi uvicorn sse-starlette mcp || true
+                RUN if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+                EXPOSE 8000
+                ENV PORT=8000
+                # Injected by orchestrator if needed
+                ENV MCP_TARGET_CMD="python src/main.py"
+                CMD ["python", "mcp_bridge.py"]
+            """))
+            logger.info("Generated Dockerfile for MCP bridge")
+            
+        if not compose_path.exists():
+            # For local testing compat
+            compose_path.write_text(dedent(f"""\
+                version: '3.8'
+                services:
+                  {agent_name}:
+                    build: .
+                    container_name: {agent_name}
+                    ports:
+                      - "8000:8000"
+                    environment:
+                      - MCP_TARGET_CMD=python src/main.py
+            """))
+            logger.info("Generated docker-compose.yml for MCP")
 
     def _build_instrumented_image(
         self, agent_temp_path, agent_folder_name, agent_api_key

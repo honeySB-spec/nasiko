@@ -89,7 +89,7 @@ class TracingInjector:
 
     def _find_main_file(self, agent_code_path: str) -> str:
         """Find the main entry point file"""
-        candidates = ["__main__.py", "main.py", "app.py", "run.py"]
+        candidates = ["__main__.py", "main.py", "app.py", "run.py", "server.py", "mcp_server.py", "mcp_bridge.py"]
 
         # Check direct candidates first
         for candidate in candidates:
@@ -115,7 +115,7 @@ class TracingInjector:
                             content = f.read()
                             if any(
                                 pattern in content
-                                for pattern in ["uvicorn.run", "FastAPI(", "Starlette("]
+                                for pattern in ["uvicorn.run", "FastAPI(", "Starlette(", "FastMCP(", "mcp.server"]
                             ):
                                 return file_path
                     except (UnicodeDecodeError, PermissionError):
@@ -388,10 +388,15 @@ class TracingInjector:
                 with open(agentcard_path, "r", encoding="utf-8") as f:
                     agentcard = json.load(f)
 
-                framework = agentcard.get("agentFramework")
+                framework = agentcard.get("agentFramework", "").lower()
                 if framework:
                     logger.info(f"📋 Detected agent framework: {framework}")
-                    return framework.lower()  # Normalize to lowercase
+                    # Normalize MCP-related frameworks
+                    if framework in ("mcp", "mcp_server", "mcp-server", "stdio-mcp"):
+                        return "mcp"
+                    if framework in ("fastmcp", "fast-mcp"):
+                        return "fastmcp"
+                    return framework
                 else:
                     logger.info("📋 No agentFramework field found in AgentCard.json")
             else:

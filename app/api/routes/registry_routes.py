@@ -14,6 +14,7 @@ from ..types import (
     RegistryUpsertRequest,
     VersionStatusUpdateRequest,
     VersionStatusUpdateResponse,
+    MCPAssociationRequest,
 )
 
 
@@ -112,5 +113,30 @@ def create_registry_routes(handlers: HandlerFactory) -> APIRouter:
         return await handlers.registry.update_agent_version_status(
             agent_name, status_update
         )
+
+    @router.put(
+        "/agent/{agent_id}/mcp-servers",
+        summary="Connect MCP Servers to Agent",
+        description="Associate one or more published MCP servers with an existing agent. The agent gains access to the MCP servers' tools.",
+    )
+    async def connect_mcp_servers(
+        request: MCPAssociationRequest,
+        agent_id: str = Path(..., description="Agent ID to connect MCP servers to"),
+    ):
+        return await handlers.registry.connect_mcp_servers(
+            agent_id, request.mcp_server_ids
+        )
+
+    @router.get(
+        "/agent/{agent_id}/mcp-servers",
+        summary="Get Connected MCP Servers",
+        description="Get details of all MCP servers connected to an agent",
+    )
+    async def get_connected_mcp_servers(
+        agent_id: str = Path(
+            ..., description="Agent ID to get connected MCP servers for"
+        ),
+    ):
+        return await handlers.registry.get_connected_mcp_servers(agent_id)
 
     return router

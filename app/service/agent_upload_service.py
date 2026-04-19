@@ -24,6 +24,7 @@ class AgentUploadResult:
         validation_errors: Optional[List[str]] = None,
         upload_id: Optional[str] = None,
         version: Optional[str] = None,
+        artifact_type: str = "agent",
     ):
         self.success = success
         self.agent_name = agent_name
@@ -33,12 +34,14 @@ class AgentUploadResult:
         self.validation_errors = validation_errors or []
         self.upload_id = upload_id
         self.version = version
+        self.artifact_type = artifact_type
 
 
 class ValidationResult:
-    def __init__(self, is_valid: bool, errors: List[str] = None):
+    def __init__(self, is_valid: bool, errors: List[str] = None, artifact_type: str = "agent"):
         self.is_valid = is_valid
         self.errors = errors or []
+        self.artifact_type = artifact_type
 
 
 async def _determine_agent_name(temp_dir: str) -> str:
@@ -105,11 +108,12 @@ class AgentUploadService:
                     agent_name=agent_name,
                     status="validation_failed",
                     validation_errors=validation.errors,
+                    artifact_type=validation.artifact_type,
                 )
 
             # Generate AgentCard.json if missing
             capabilities_generated = await self._ensure_agentcard_json(
-                temp_dir, agent_name
+                temp_dir, agent_name, is_mcp=(validation.artifact_type == "mcp_server")
             )
 
             # Copy to agents directory and get the version used
@@ -122,6 +126,7 @@ class AgentUploadService:
                 capabilities_generated=capabilities_generated,
                 orchestration_triggered=False,
                 version=version,
+                artifact_type=validation.artifact_type,
             )
 
         except Exception as e:
@@ -197,11 +202,12 @@ class AgentUploadService:
                     agent_name=agent_name,
                     status="validation_failed",
                     validation_errors=validation.errors,
+                    artifact_type=validation.artifact_type,
                 )
 
             # Generate AgentCard.json if missing
             capabilities_generated = await self._ensure_agentcard_json(
-                str(source_dir), agent_name
+                str(source_dir), agent_name, is_mcp=(validation.artifact_type == "mcp_server")
             )
 
             # Copy to agents directory and get the version used
@@ -214,6 +220,7 @@ class AgentUploadService:
                 capabilities_generated=capabilities_generated,
                 orchestration_triggered=False,
                 version=version,
+                artifact_type=validation.artifact_type,
             )
 
         except Exception as e:
@@ -244,43 +251,6 @@ class AgentUploadService:
             errors.append(f"Invalid agent directory: {agent_path}")
             return ValidationResult(is_valid=False, errors=errors)
 
-        # Check for Dockerfile
-        dockerfile_path = agent_dir / "Dockerfile"
-        if not dockerfile_path.exists():
-            errors.append("Dockerfile is missing")
-        else:
-            # Basic Dockerfile validation
-            try:
-                dockerfile_content = dockerfile_path.read_text()
-                if not dockerfile_content.strip():
-                    errors.append("Dockerfile is empty")
-                elif "FROM" not in dockerfile_content.upper():
-                    errors.append("Dockerfile missing FROM instruction")
-            except Exception as e:
-                errors.append(f"Cannot read Dockerfile: {str(e)}")
-
-        # Check for docker-compose.yml
-        compose_path = agent_dir / "docker-compose.yml"
-        if not compose_path.exists():
-            errors.append("docker-compose.yml is missing")
-        else:
-            # Basic docker-compose validation
-            try:
-                compose_content = compose_path.read_text()
-                if not compose_content.strip():
-                    errors.append("docker-compose.yml is empty")
-                else:
-                    compose_data = yaml.safe_load(compose_content)
-                    if (
-                        not isinstance(compose_data, dict)
-                        or "services" not in compose_data
-                    ):
-                        errors.append("docker-compose.yml missing services section")
-            except yaml.YAMLError as e:
-                errors.append(f"Invalid docker-compose.yml syntax: {str(e)}")
-            except Exception as e:
-                errors.append(f"Cannot read docker-compose.yml: {str(e)}")
-
         # Check for main.py entry point
         main_py_locations = [
             agent_dir / "src" / "main.py",
@@ -290,6 +260,7 @@ class AgentUploadService:
         ]
 
         main_py_found = False
+        main_content = ""
         for loc in main_py_locations:
             if loc.exists():
                 main_py_found = True
@@ -307,14 +278,87 @@ class AgentUploadService:
                 "main.py entry point not found (checked src/main.py and main.py)"
             )
 
+        # Artifact type detection
+        artifact_type = "agent"
+        if main_content:
+            self.logger.info(f"Checking main_content for MCP signatures. Length: {len(main_content)}")
+            # Check for MCP signatures like FastMCP imports or mcp SDK
+            is_mcp = "mcp" in main_content and ("FastMCP" in main_content or "mcp.server" in main_content)
+            self.logger.info(f"is_mcp detection result: {is_mcp}")
+            
+            # Check for generic agent frameworks
+            agent_frameworks = ["langchain", "crewai", "autogen", "llama_index"]
+            is_agent = any(fw in main_content.lower() for fw in agent_frameworks)
+            self.logger.info(f"is_agent detection result: {is_agent}")
+            
+            # Additional heuristic: If it has A2A capability tools defined
+            if "AgentCapabilities" in main_content or "a2a" in main_content:
+                is_agent = True
+                self.logger.info("Found AgentCapabilities or a2a, setting is_agent=True")
+                
+            if is_mcp and is_agent:
+                self.logger.warning("Ambiguous artifact type detected")
+                errors.append("Ambiguous artifact type: Code imports both MCP server framework and agent framework. Please separate concerns.")
+            elif is_mcp:
+                artifact_type = "mcp_server"
+                self.logger.info("Detected artifact_type: mcp_server")
+            else:
+                self.logger.info("Detected artifact_type: agent")
+        else:
+            self.logger.warning("No main_content found to check for artifact type")
+
+        # Dockerfile & Docker-compose handling (for MCP server they are optional but agent needs them by default maybe, wait let's just make it not strictly fail if it's an mcp server)
+        # Actually, let's keep track of dockerfile missing errors:
+        docker_errors = []
+
+        # Check for Dockerfile
+        dockerfile_path = agent_dir / "Dockerfile"
+        if not dockerfile_path.exists():
+            docker_errors.append("Dockerfile is missing")
+        else:
+            # Basic Dockerfile validation
+            try:
+                dockerfile_content = dockerfile_path.read_text()
+                if not dockerfile_content.strip():
+                    docker_errors.append("Dockerfile is empty")
+                elif "FROM" not in dockerfile_content.upper():
+                    docker_errors.append("Dockerfile missing FROM instruction")
+            except Exception as e:
+                docker_errors.append(f"Cannot read Dockerfile: {str(e)}")
+
+        # Check for docker-compose.yml
+        compose_path = agent_dir / "docker-compose.yml"
+        if not compose_path.exists():
+            docker_errors.append("docker-compose.yml is missing")
+        else:
+            # Basic docker-compose validation
+            try:
+                compose_content = compose_path.read_text()
+                if not compose_content.strip():
+                    docker_errors.append("docker-compose.yml is empty")
+                else:
+                    compose_data = yaml.safe_load(compose_content)
+                    if (
+                        not isinstance(compose_data, dict)
+                        or "services" not in compose_data
+                    ):
+                        docker_errors.append("docker-compose.yml missing services section")
+            except yaml.YAMLError as e:
+                docker_errors.append(f"Invalid docker-compose.yml syntax: {str(e)}")
+            except Exception as e:
+                docker_errors.append(f"Cannot read docker-compose.yml: {str(e)}")
+                
+        # Require Dockerfile and docker-compose.yml for all artifact types
+        errors.extend(docker_errors)
+
         # Check for common Python files to ensure it's a valid Python project
         python_files = list(agent_dir.rglob("*.py"))
         if not python_files:
             errors.append("No Python files found in the agent directory")
 
-        self.logger.info(f"Validation completed with {len(errors)} errors")
+        self.logger.info(f"Validation completed with {len(errors)} errors for artifact type {artifact_type}")
 
-        return ValidationResult(is_valid=len(errors) == 0, errors=errors)
+        return ValidationResult(is_valid=len(errors) == 0, errors=errors, artifact_type=artifact_type)
 
     async def _extract_zip_file(self, file: UploadFile) -> str:
         """Extract uploaded zip file to temporary directory"""
@@ -412,17 +456,18 @@ class AgentUploadService:
         return temp_dir
 
     async def _ensure_agentcard_json(
-        self, agent_path: str, agent_name: str, n8n_agent: bool = False
+        self, agent_path: str, agent_name: str, n8n_agent: bool = False, is_mcp: bool = False
     ) -> bool:
-        """Generate AgentCard.json if missing using agentcard service"""
-        agentcard_path = Path(agent_path) / "AgentCard.json"
+        """Generate manifest if missing using agentcard service"""
+        file_name = "mcp_manifest.json" if is_mcp else "AgentCard.json"
+        agentcard_path = Path(agent_path) / file_name
 
         if agentcard_path.exists():
-            self.logger.info("AgentCard.json already exists")
+            self.logger.info(f"{file_name} already exists")
             return False
 
-        # Generate AgentCard.json using the agentcard service
-        self.logger.info("Generating AgentCard.json using agentcard service")
+        # Generate manifest using the agentcard service
+        self.logger.info(f"Generating {file_name} using agentcard service")
 
         try:
             # Use the agentcard service to generate AgentCard
@@ -431,16 +476,17 @@ class AgentUploadService:
                 agent_name=agent_name,
                 n8n_agent=n8n_agent,
                 base_url=settings.NASIKO_API_URL,
+                is_mcp=is_mcp,
             )
 
             if success:
                 self.logger.info(
-                    f"Successfully generated AgentCard.json for {agent_name}"
+                    f"Successfully generated {file_name} for {agent_name}"
                 )
                 return True
             else:
                 self.logger.warning(
-                    f"Failed to generate AgentCard for {agent_name}, using fallback"
+                    f"Failed to generate manifest for {agent_name}, using fallback"
                 )
                 return False
 
@@ -449,7 +495,7 @@ class AgentUploadService:
             return False
 
     async def _get_version_from_agentcard(self, agent_path: str) -> str:
-        """Get version from AgentCard.json, fallback to v1.0.0 if not found"""
+        """Get version from manifest, fallback to v1.0.0 if not found"""
         try:
             agentcard = await self.agentcard_service.load_agentcard_from_file(
                 agent_path
@@ -474,7 +520,7 @@ class AgentUploadService:
 
     async def _copy_to_agents_directory(self, temp_dir: str, agent_name: str):
         """Copy agent from temp directory to agents/{agent_name}/{version}/"""
-        # Get version from AgentCard.json (will fallback to v1.0.0 if not found)
+        # Get version from manifest (will fallback to v1.0.0 if not found)
         version = await self._get_version_from_agentcard(temp_dir)
 
         # Create versioned directory for initial upload

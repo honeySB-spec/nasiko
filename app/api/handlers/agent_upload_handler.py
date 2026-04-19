@@ -76,6 +76,7 @@ class AgentUploadHandler(BaseHandler):
                     orchestration_triggered=result.orchestration_triggered,
                     validation_errors=result.validation_errors,
                     version=result.version,
+                    artifact_type=getattr(result, "artifact_type", "agent"),
                 ),
                 status_code=201 if result.success else 400,
                 message=result.status,
@@ -108,6 +109,7 @@ class AgentUploadHandler(BaseHandler):
                     orchestration_triggered=result.orchestration_triggered,
                     validation_errors=result.validation_errors,
                     version=result.version,
+                    artifact_type=getattr(result, "artifact_type", "agent"),
                 ),
                 status_code=201 if result.success else 400,
                 message=result.status,
@@ -265,6 +267,7 @@ class AgentUploadHandler(BaseHandler):
                     tags=tags,
                     description=description,
                     skills=skills,
+                    artifact_type=status.get("artifact_type", "agent"),
                 )
                 simple_agents.append(simple_agent)
 

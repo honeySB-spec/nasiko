@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from agent import AgentCardGeneratorAgent
+from mcp_agent import MCPManifestGeneratorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def main():
     parser.add_argument(
         "-o",
         "--output",
-        help="Output path for AgentCard.json (default: <agent_path>/AgentCard.json)",
+        help="Output path for AgentCard.json (default: <agent_path>/AgentCard.json or mcp_manifest.json)",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show detailed progress"
@@ -42,6 +43,11 @@ def main():
         "--n8n-agent",
         action="store_true",
         help="Generate agent card from n8n workflow (expects n8n_workflow.json in agent_path)",
+    )
+    parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Generate MCP manifest for MCP server",
     )
 
     args = parser.parse_args()
@@ -65,7 +71,8 @@ def main():
 
     output_path = args.output
     if not output_path:
-        output_path = str(agent_path / "AgentCard.json")
+        file_name = "mcp_manifest.json" if args.mcp else "AgentCard.json"
+        output_path = str(agent_path / file_name)
 
     logger.info(f"Analyzing agent at: {args.agent_path}")
     logger.info(f"Output will be saved to: {output_path}")
@@ -82,10 +89,14 @@ def main():
                 sys.exit(1)
             logger.info(f"Using n8n workflow file: {n8n_workflow_path}")
 
-        logger.info(f"Initializing AgentCard Generator with model: {args.model}")
-        agent = AgentCardGeneratorAgent(
-            api_key=args.api_key, model=args.model, n8n_agent=args.n8n_agent
-        )
+        if args.mcp:
+            logger.info(f"Initializing MCP Manifest Generator with model: {args.model}")
+            agent = MCPManifestGeneratorAgent(api_key=args.api_key, model=args.model)
+        else:
+            logger.info(f"Initializing AgentCard Generator with model: {args.model}")
+            agent = AgentCardGeneratorAgent(
+                api_key=args.api_key, model=args.model, n8n_agent=args.n8n_agent
+            )
 
         logger.info("Starting AgentCard generation")
         result = agent.generate_agentcard(

@@ -421,8 +421,10 @@ curl -X POST http://localhost:9100/agents/my-agent/analyze \
   -H "Content-Type: application/json" \
   -d '{"text": "Sample document content"}'
 
-# Test via intelligent routing through Kong
-curl "http://localhost:9100/router/route?query=analyze this document"
+# Router automatically selects best agent
+curl -X POST "http://localhost:9100/router" \
+  -F "session_id=test" \
+  -F "query=analyze this document"
 ```
 
 ## 🔄 Intelligent Routing System
@@ -440,15 +442,15 @@ The router service automatically selects the best agent for each query:
 
 ```bash
 # Router automatically selects best agent
-curl "http://localhost:9100/router/route?query=translate this to French"
-# Returns: {"agent_url": "http://localhost:9100/agents/translator", "confidence": 0.95}
+curl -X POST "http://localhost:9100/router" -F "session_id=test" -F "query=translate this to French"
+# Returns: Agent selected: translator, etc.
 
-curl "http://localhost:9100/router/route?query=check code compliance"  
-# Returns: {"agent_url": "http://localhost:9100/agents/compliance-checker", "confidence": 0.89}
+curl -X POST "http://localhost:9100/router" -F "session_id=test" -F "query=check code compliance"
+# Returns: Agent selected: compliance-checker, etc.
 
 # Fallback handling
-curl "http://localhost:9100/router/route?query=unknown task"
-# Returns: {"agent_url": "http://localhost:9100/agents/general-agent", "confidence": 0.45}
+curl -X POST "http://localhost:9100/router" -F "session_id=test" -F "query=unknown task"
+# Returns: Fallback to general-agent or error message
 ```
 
 ## 📊 Observability & Monitoring
@@ -611,8 +613,8 @@ nasiko agent upload-directory ./agents/a2a-compliance-checker --name compliance
 nasiko agent upload-directory ./agents/a2a-github-agent --name github
 
 # Test deployed agents via Kong Gateway
-curl "http://localhost:9100/router/route?query=check document compliance"
-curl "http://localhost:9100/router/route?query=create GitHub issue"
+curl -X POST "http://localhost:9100/router" -F "session_id=test" -F "query=check document compliance"
+curl -X POST "http://localhost:9100/router" -F "session_id=test" -F "query=create GitHub issue"
 ```
 
 ## 🔧 Development Workflow

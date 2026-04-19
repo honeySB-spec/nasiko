@@ -26,7 +26,6 @@ clean-all:
 
 # Clean everything and start orchestrator services
 clean-start-nasiko: clean-all
-	@$(MAKE) orchestrator
 	@$(MAKE) redis-listener
 
 # Stop app compose, remove app backend image, start app compose, start redis listener
@@ -53,14 +52,14 @@ router:
 	@echo "Router services restarted"
 
 # Run orchestrator service
+# (Removed orchestrator.py invocation as it is defunct/missing. Use redis-listener instead for orchestrator flows)
 orchestrator:
-	@echo "Starting orchestrator..."
-	uv run orchestrator/orchestrator.py
+	@echo "Orchestrator entry point moved to redis_stream_listener.py or handled in background. Removing missing script invocation."
 
 # Run redis stream listener
 redis-listener:
 	@echo "Starting redis stream listener..."
-	uv run orchestrator/redis_stream_listener.py
+	PYTHONPATH=. uv run orchestrator/redis_stream_listener.py
 
 # Delete all volumes and run orchestrator + redis listener sequentially
 start-nasiko:
@@ -71,5 +70,4 @@ start-nasiko:
 	@echo "Removing all Docker volumes..."
 	-docker volume rm $$(docker volume ls -q)
 	@echo "Docker cleanup complete!"
-	@$(MAKE) orchestrator
 	@$(MAKE) redis-listener

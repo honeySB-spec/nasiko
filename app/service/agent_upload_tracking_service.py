@@ -106,6 +106,7 @@ class AgentUploadTrackingService:
                             "upload_id": upload_id,
                             "upload_type": "zip",
                             "version": getattr(result, "version", None),
+                            "artifact_type": getattr(result, "artifact_type", "agent"),
                         },
                     )
                 )
@@ -142,6 +143,7 @@ class AgentUploadTrackingService:
                         "capabilities_generated": result.capabilities_generated,
                         "orchestration_triggered": result.orchestration_triggered,
                         "processing_duration": time.time() - start_time,
+                        "artifact_type": getattr(result, "artifact_type", "agent"),
                     },
                 )
 
@@ -261,6 +263,7 @@ class AgentUploadTrackingService:
                         "status_message": "GitHub repository processed successfully",
                         "agent_name": result.agent_name,  # Update with actual agent name
                         "capabilities_generated": result.capabilities_generated,
+                        "artifact_type": getattr(result, "artifact_type", "agent"),
                     },
                 )
 
@@ -284,6 +287,7 @@ class AgentUploadTrackingService:
                             "repository_full_name": repository_full_name,
                             "branch": branch,
                             "version": getattr(result, "version", None),
+                            "artifact_type": getattr(result, "artifact_type", "agent"),
                         },
                     )
                 )
@@ -414,6 +418,7 @@ class AgentUploadTrackingService:
                             "upload_id": upload_id,
                             "upload_type": "directory",
                             "version": getattr(result, "version", None),
+                            "artifact_type": getattr(result, "artifact_type", "agent"),
                         },
                     )
                 )
@@ -450,6 +455,7 @@ class AgentUploadTrackingService:
                         "capabilities_generated": result.capabilities_generated,
                         "orchestration_triggered": result.orchestration_triggered,
                         "processing_duration": time.time() - start_time,
+                        "artifact_type": getattr(result, "artifact_type", "agent"),
                     },
                 )
 

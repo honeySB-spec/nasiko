@@ -117,6 +117,33 @@ class RegistryRepository(BaseRepository):
             )
             return False
 
+    async def update_connected_mcp_servers(
+        self, agent_id: str, mcp_server_ids: list
+    ) -> bool:
+        """Update the connected MCP servers list for an agent"""
+        from datetime import datetime, timezone
+
+        try:
+            result = await self.RegistryCollection.update_one(
+                {"id": agent_id},
+                {
+                    "$set": {
+                        "connected_mcp_servers": mcp_server_ids,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            updated = result.modified_count > 0 or result.matched_count > 0
+            self.logger.info(
+                f"REPO: Updated connected MCP servers for agent {agent_id}: {mcp_server_ids}"
+            )
+            return updated
+        except Exception as e:
+            self.logger.error(
+                f"REPO: Error updating connected MCP servers for agent {agent_id}: {e}"
+            )
+            return False
+
     def _normalize_version_fields(self, registry_entry: dict) -> dict:
         """Add default version fields to existing registry entries"""
         from datetime import datetime, timezone

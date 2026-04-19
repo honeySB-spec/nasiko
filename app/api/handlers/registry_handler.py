@@ -175,6 +175,14 @@ class RegistryHandler(BaseHandler):
             ),
             created_at=created_at_str,
             updated_at=updated_at_str,
+            artifact_type=(
+                registry.artifact_type if hasattr(registry, "artifact_type") else "agent"
+            ),
+            connected_mcp_servers=(
+                registry.connected_mcp_servers
+                if hasattr(registry, "connected_mcp_servers")
+                else []
+            ),
         )
 
     async def create_registry(
@@ -253,6 +261,11 @@ class RegistryHandler(BaseHandler):
                         registry.defaultOutputModes
                         if hasattr(registry, "defaultOutputModes")
                         else []
+                    ),
+                    artifact_type=(
+                        registry.artifact_type
+                        if hasattr(registry, "artifact_type")
+                        else "agent"
                     ),
                 )
                 registry_items.append(item)
@@ -549,6 +562,11 @@ class RegistryHandler(BaseHandler):
                             icon_url=icon_url,
                             tags=tags,
                             description=description,
+                            artifact_type=(
+                                registry.artifact_type
+                                if hasattr(registry, "artifact_type")
+                                else "agent"
+                            ),
                         )
                         user_agents.append(user_agent)
                         processed_agent_ids.add(agent_id)
@@ -680,3 +698,43 @@ class RegistryHandler(BaseHandler):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to update agent version status: {str(e)}",
             )
+
+    async def connect_mcp_servers(self, agent_id: str, mcp_server_ids: list):
+        """Connect MCP servers to an agent"""
+        try:
+            self.log_info(
+                f"Connecting MCP servers to agent {agent_id}",
+                mcp_server_ids=mcp_server_ids,
+            )
+            result = await self.service.connect_mcp_servers(agent_id, mcp_server_ids)
+            return {
+                "message": f"Successfully connected {result['count']} MCP server(s) to agent {agent_id}",
+                "agent_id": agent_id,
+                "connected_mcp_servers": result["connected_mcp_servers"],
+                "status_code": 200,
+            }
+        except ValueError as e:
+            self.log_error("MCP association failed - validation error", e)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            await self.handle_service_error("connect_mcp_servers", e)
+
+    async def get_connected_mcp_servers(self, agent_id: str):
+        """Get MCP servers connected to an agent"""
+        try:
+            self.log_info(
+                f"Getting connected MCP servers for agent {agent_id}"
+            )
+            mcp_servers = await self.service.get_connected_mcp_servers(agent_id)
+            return {
+                "agent_id": agent_id,
+                "connected_mcp_servers": mcp_servers,
+                "count": len(mcp_servers),
+                "status_code": 200,
+            }
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+            )
+        except Exception as e:
+            await self.handle_service_error("get_connected_mcp_servers", e)

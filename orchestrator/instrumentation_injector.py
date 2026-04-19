@@ -24,6 +24,8 @@ class InstrumentationInjector:
         main_py_paths = [
             agent_temp_path / "src" / "main.py",
             agent_temp_path / "main.py",
+            agent_temp_path / "mcp_server.py",
+            agent_temp_path / "mcp_bridge.py",
             agent_temp_path / "__main__.py",
             agent_temp_path / "src" / "__main__.py",
         ]
@@ -184,6 +186,7 @@ if LANGTRACE_API_KEY:
             
             # AI Frameworks  
             ("langtrace_python_sdk.instrumentation.crewai", "CrewAIInstrumentation", "CrewAI"),
+            ("langtrace_python_sdk.instrumentation.mcp", "MCPInstrumentation", "MCP Server"),
             
             # Web Frameworks
             ("opentelemetry.instrumentation.fastapi", "FastAPIInstrumentor", "FastAPI"),

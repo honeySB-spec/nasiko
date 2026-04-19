@@ -52,6 +52,13 @@ class K8sBuildWorker:
         )
         self.observability_config = ObservabilityConfig()
 
+        # Initialize MCP injector
+        import app.utils.mcp.injector as mcp_injector_pkg
+        mcp_path = str(Path(mcp_injector_pkg.__file__).resolve().parent)
+        self.mcp_injector = mcp_injector_pkg.MCPInjector(
+            mcp_source_path=mcp_path
+        )
+
     def connect_redis(self):
         """Connect to Redis server"""
         try:
@@ -482,6 +489,10 @@ class K8sBuildWorker:
             # Add observability environment variables
             obs_env_vars = await self.get_observability_env_vars(agent_name)
             env_vars.update(obs_env_vars)
+
+            # Add MCP environment variables
+            mcp_env_vars = await self.get_mcp_env_vars(agent_name, base_url)
+            env_vars.update(mcp_env_vars)
 
             # Add WEBHOOK_URL for n8n agents
             if upload_type == "n8n_register" and webhook_url:
@@ -1387,6 +1398,10 @@ class K8sBuildWorker:
             obs_env_vars = await self.get_observability_env_vars(agent_name)
             env_vars.update(obs_env_vars)
 
+            # Add MCP environment variables
+            mcp_env_vars = await self.get_mcp_env_vars(agent_name, base_url)
+            env_vars.update(mcp_env_vars)
+
             deploy_result = self.k8s_service.deploy_agent(
                 deployment_name=deployment_name,
                 image_reference=image_destination,
@@ -1518,6 +1533,10 @@ class K8sBuildWorker:
             # Add observability environment variables
             obs_env_vars = await self.get_observability_env_vars(agent_name)
             env_vars.update(obs_env_vars)
+
+            # Add MCP environment variables
+            mcp_env_vars = await self.get_mcp_env_vars(agent_name, base_url)
+            env_vars.update(mcp_env_vars)
 
             deploy_result = self.k8s_service.deploy_agent(
                 deployment_name=deployment_name,
@@ -1703,6 +1722,10 @@ class K8sBuildWorker:
         # Add observability environment variables
         obs_env_vars = await self.get_observability_env_vars(agent_name)
         env_vars.update(obs_env_vars)
+
+        # Add MCP environment variables
+        mcp_env_vars = await self.get_mcp_env_vars(agent_name, base_url)
+        env_vars.update(mcp_env_vars)
 
         if upload_type == "n8n_register":
             env_vars["WEBHOOK_URL"] = (
@@ -1912,25 +1935,26 @@ class K8sBuildWorker:
         )
         return fallback_tag
 
-    async def _inject_observability_if_enabled(
+    async def _inject_runtime_dependencies(
         self, agent_name: str, base_url: str, agent_path: str
     ) -> str | None:
-        """Inject observability code into agent if enabled"""
-        if not self.observability_config.get_injection_enabled():
-            self.logger.info(
-                f"Observability injection disabled, skipping for {agent_name}"
-            )
-            return None
+        """Inject observability and MCP tools into agent if enabled"""
+        # 1. Check if we should skip injection
+        tracing_enabled = self.observability_config.is_tracing_enabled() and self.observability_config.get_injection_enabled()
+        
+        # Check if MCP servers are connected
+        mcp_env_vars = await self.get_mcp_env_vars(agent_name, base_url)
+        mcp_enabled = "NASIKO_MCP_SERVERS" in mcp_env_vars
 
-        if not self.observability_config.is_tracing_enabled():
-            self.logger.info(f"Tracing disabled, skipping injection for {agent_name}")
+        if not tracing_enabled and not mcp_enabled:
+            self.logger.info(f"Injection not needed for {agent_name}")
             return None
 
         try:
             import tempfile
             import tarfile
 
-            self.logger.info(f"🔄 Starting observability injection for {agent_name}")
+            self.logger.info(f"🔄 Starting runtime dependency injection for {agent_name}")
 
             # Step 1: Download agent files
             download_url = f"{base_url}/api/v1/agents/{agent_name}/download"
@@ -1943,8 +1967,6 @@ class K8sBuildWorker:
                 .replace("-", "")
                 .isdigit()
             ):
-                # Use versioned download only for proper version paths (e.g., /v1.0.0, /v2)
-                # Skip version extraction for N8N agents or other non-versioned agents
                 version = agent_path.split("/v")[-1] if "/v" in agent_path else None
                 if version and (
                     version.replace(".", "").replace("-", "").isdigit()
@@ -1962,14 +1984,13 @@ class K8sBuildWorker:
                         )
                         return None
 
-                    # Save tarball to temp file
                     with tempfile.NamedTemporaryFile(
                         mode="wb", suffix=".tar.gz", delete=False
                     ) as tmp_tar:
                         tmp_tar.write(await response.read())
                         tar_path = tmp_tar.name
 
-            # Step 2: Extract and inject observability
+            # Step 2: Extract and inject
             with tempfile.TemporaryDirectory() as extract_dir:
                 self.logger.info(
                     f"Extracting agent files for injection to {extract_dir}"
@@ -1977,101 +1998,60 @@ class K8sBuildWorker:
                 with tarfile.open(tar_path, "r:gz") as tar:
                     tar.extractall(extract_dir)
 
-                # Check if Dockerfile exists before injection
-                dockerfile_before = os.path.join(extract_dir, "Dockerfile")
-                dockerfile_exists_before = os.path.exists(dockerfile_before)
-                self.logger.info(
-                    f"📋 Dockerfile exists before injection: {dockerfile_exists_before}"
-                )
+                # Inject observability code if enabled
+                if tracing_enabled:
+                    self.tracing_injector.inject_into_agent(extract_dir, agent_name)
+                
+                # Inject MCP tools if enabled
+                if mcp_enabled:
+                    self.mcp_injector.inject_into_agent(extract_dir, agent_name)
 
-                # Inject observability code
-                injection_success = self.tracing_injector.inject_into_agent(
-                    extract_dir, agent_name
-                )
+                # Step 3: Create ConfigMap with injected files
+                import base64
 
-                # Check if Dockerfile exists after injection
-                dockerfile_exists_after = os.path.exists(dockerfile_before)
-                dockerfile_size = (
-                    os.path.getsize(dockerfile_before) if dockerfile_exists_after else 0
-                )
-                self.logger.info(
-                    f"📋 Dockerfile exists after injection: {dockerfile_exists_after}, size: {dockerfile_size} bytes"
-                )
+                configmap_name = f"agent-files-{agent_name}-{int(time.time())}"
+                configmap_data = {}
 
-                if dockerfile_exists_before and not dockerfile_exists_after:
-                    self.logger.error("🚨 Dockerfile was deleted during injection!")
-                elif dockerfile_exists_after and dockerfile_size == 0:
-                    self.logger.error(
-                        "🚨 Dockerfile was corrupted during injection (0 bytes)!"
-                    )
-
-                if (
-                    injection_success
-                    and dockerfile_exists_after
-                    and dockerfile_size > 0
-                ):  # Step 3: Create ConfigMap with observability-injected files
-                    import base64
-
-                    configmap_name = f"agent-files-{agent_name}-{int(time.time())}"
-                    configmap_data = {}
-
-                    # Encode each file as base64 in the ConfigMap
-                    for root, dirs, files in os.walk(extract_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            # Create relative path for ConfigMap key
-                            rel_path = os.path.relpath(file_path, extract_dir)
-                            # Replace path separators with underscores for ConfigMap key
-                            # Use base64 encoding to safely handle all file paths including dunder files
-                            configmap_key = (
-                                base64.b64encode(rel_path.encode("utf-8"))
-                                .decode("ascii")
-                                .replace("=", "_eq_")
-                                .replace("+", "_plus_")
-                                .replace("/", "_slash_")
-                            )
-
-                            with open(file_path, "rb") as f:
-                                file_content = f.read()
-                                configmap_data[configmap_key] = base64.b64encode(
-                                    file_content
-                                ).decode("utf-8")
-
-                    # Create ConfigMap using k8s_service
-                    configmap_created = await self._create_agent_files_configmap(
-                        configmap_name, configmap_data
-                    )
-
-                    if configmap_created:
-                        self.logger.info(
-                            f"✅ Created ConfigMap {configmap_name} with observability-injected files"
+                for root, dirs, files in os.walk(extract_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, extract_dir)
+                        configmap_key = (
+                            base64.b64encode(rel_path.encode("utf-8"))
+                            .decode("ascii")
+                            .replace("=", "_eq_")
+                            .replace("+", "_plus_")
+                            .replace("/", "_slash_")
                         )
 
-                        # Cleanup original tar file
-                        os.unlink(tar_path)
+                        with open(file_path, "rb") as f:
+                            file_content = f.read()
+                            configmap_data[configmap_key] = base64.b64encode(
+                                file_content
+                            ).decode("utf-8")
 
-                        # Return ConfigMap name for build job to use
-                        return configmap_name
-                    else:
-                        self.logger.warning(
-                            f"Failed to create ConfigMap for {agent_name}, using original files"
-                        )
-                        # Cleanup and return None to use original files
-                        os.unlink(tar_path)
-                        return None
+                configmap_created = await self._create_agent_files_configmap(
+                    configmap_name, configmap_data
+                )
+
+                if configmap_created:
+                    self.logger.info(
+                        f"✅ Created ConfigMap {configmap_name} with injected files"
+                    )
+                    os.unlink(tar_path)
+                    return configmap_name
                 else:
                     self.logger.warning(
-                        f"Observability injection failed for {agent_name}, continuing with original files"
+                        f"Failed to create ConfigMap for {agent_name}, using original files"
                     )
-                    # Cleanup and return None to use original files
                     os.unlink(tar_path)
                     return None
 
         except Exception as e:
             self.logger.error(
-                f"Error during observability injection for {agent_name}: {e}"
+                f"Error during runtime dependency injection for {agent_name}: {e}"
             )
-            # Don't raise - continue with original files if injection fails
+            return None
 
     async def _create_agent_files_configmap(
         self, configmap_name: str, configmap_data: dict
@@ -2098,6 +2078,44 @@ class K8sBuildWorker:
             ).lower(),
             "AGENT_PROJECT_NAME": agent_name,
         }
+
+    async def get_mcp_env_vars(self, agent_id: str, base_url: str) -> dict:
+        """Get environment variables for connected MCP servers"""
+        try:
+            url = f"{base_url}/api/v1/registry/agent/{agent_id}/mcp-servers"
+            self.logger.info(f"Fetching connected MCP servers for {agent_id}")
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        mcp_servers = data.get("connected_mcp_servers", [])
+                        
+                        if not mcp_servers:
+                            return {}
+
+                        # Format: [{"id": "mcp-id", "url": "mcp-url"}, ...]
+                        mcp_list = [
+                            {"id": s.get("id"), "url": s.get("url")}
+                            for s in mcp_servers
+                            if s.get("id") and s.get("url")
+                        ]
+                        
+                        if mcp_list:
+                            self.logger.info(f"Connected MCP servers for {agent_id}: {[s['id'] for s in mcp_list]}")
+                            return {
+                                "NASIKO_MCP_SERVERS": json.dumps(mcp_list)
+                            }
+                    else:
+                        self.logger.warning(
+                            f"Failed to fetch MCP servers for {agent_id}: {response.status}"
+                        )
+        except Exception as e:
+            self.logger.error(f"Error fetching MCP servers for {agent_id}: {e}")
+            
+        return {}
 
     async def acknowledge_message(self, msg_id: str):
         """Acknowledge message processing"""

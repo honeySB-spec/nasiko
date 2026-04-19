@@ -196,6 +196,13 @@ class Repository:
     async def delete_registry_by_agent_id(self, agent_id: str) -> bool:
         return await self.registry.delete_registry_by_agent_id(agent_id)
 
+    async def update_connected_mcp_servers(
+        self, agent_id: str, mcp_server_ids: list
+    ) -> bool:
+        return await self.registry.update_connected_mcp_servers(
+            agent_id, mcp_server_ids
+        )
+
     async def delete_agent_builds_by_agent_id(self, agent_id: str) -> int:
         return await self.agent_operations.delete_agent_builds_by_agent_id(agent_id)
 

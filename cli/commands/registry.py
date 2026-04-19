@@ -129,7 +129,12 @@ def display_agent_details(agent_data):
 [bold]Protocol Version:[/bold] {actual_data.get('protocolVersion', 'N/A')}
 [bold]Description:[/bold] {actual_data.get('description', 'N/A')}
 [bold]URL:[/bold] {actual_data.get('url', 'N/A')}
-[bold]Preferred Transport:[/bold] {actual_data.get('preferredTransport', 'N/A')}"""
+[bold]Preferred Transport:[/bold] {actual_data.get('preferredTransport', 'N/A')}
+[bold]Artifact Type:[/bold] {actual_data.get('artifact_type', 'agent')}"""
+
+    mcp_servers = actual_data.get("connected_mcp_servers", [])
+    if mcp_servers:
+        basic_info += f"\n[bold]Connected MCP Servers:[/bold] {', '.join(mcp_servers)}"
 
     console.print(Panel(basic_info, title=f"Agent: {agent_name}", border_style="blue"))
 
@@ -312,7 +317,9 @@ def display_agents_table(agents, show_details=False):
     # Center aligned columns
     table.add_column("Agent Name", style="blue", width=25, justify="center")
     table.add_column("Agent ID", style="magenta", width=50, justify="center")
-    table.add_column("Tags", style="green", width=20, justify="center")
+    table.add_column("Type", style="cyan", width=10, justify="center")
+    table.add_column("Connected MCP", style="yellow", width=20, justify="center")
+    table.add_column("Tags", style="green", width=15, justify="center")
 
     if show_details:
         table.add_column("Description", style="white", max_width=50, justify="center")
@@ -320,10 +327,14 @@ def display_agents_table(agents, show_details=False):
     for agent in agents:
         agent_name = agent.get("name", "Unknown")
         agent_id = agent.get("agent_id", "N/A")
+        agent_type = agent.get("artifact_type", "agent")
         agent_tags = agent.get("tags", [])
         agent_description = agent.get("description", "No description")
 
-        row = [agent_name, agent_id, ", ".join(agent_tags)]
+        mcp_servers = agent.get("connected_mcp_servers", [])
+        mcp_display = ", ".join(mcp_servers) if mcp_servers else "None"
+        
+        row = [agent_name, agent_id, agent_type, mcp_display, ", ".join(agent_tags)]
 
         if show_details:
             row.append(agent_description)
@@ -345,6 +356,7 @@ def display_agents_list(agents, show_details=False):
     for i, agent in enumerate(agents, 1):
         agent_name = agent.get("name", "Unknown")
         agent_id = agent.get("id", "N/A")
+        agent_type = agent.get("artifact_type", "agent")
         agent_version = agent.get("version", "N/A")
         agent_description = agent.get("description", "No description")
 
@@ -352,6 +364,7 @@ def display_agents_list(agents, show_details=False):
 
         agent_info = f"[bold blue]{i}. {agent_name}[/bold blue]\n"
         agent_info += f"   Agent ID: {agent_id}\n"
+        agent_info += f"   Artifact Type: {agent_type}\n"
         agent_info += f"   URL: {agent.get('url', 'N/A')}\n"
         agent_info += f"   Version: {agent_version}\n"
         agent_info += f"   Skills: {skills_count} skills"

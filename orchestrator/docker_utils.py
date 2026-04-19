@@ -65,7 +65,7 @@ def get_container_host_port(container_name, container_port="5000"):
         return f"http://{container_name}"
 
 
-def get_kong_agent_url(agent_id):
+def get_kong_agent_url(agent_id, prefix="agents"):
     """Get the Kong gateway URL for an agent
 
     Returns the Kong gateway URL that routes to the agent through the API gateway.
@@ -73,6 +73,7 @@ def get_kong_agent_url(agent_id):
 
     Args:
         agent_id (str): ID of the agent (used for Kong routing)
+        prefix (str): URL prefix for routing (e.g., "agents" or "mcp")
 
     Returns:
         str: Kong gateway URL for the agent
@@ -91,8 +92,8 @@ def get_kong_agent_url(agent_id):
         )
         private_ip = "localhost"
 
-    kong_url = f"http://{private_ip}:9100/{agent_id}"
-    logger.info("Agent ID: %s, Kong gateway URL: %s", agent_id, kong_url)
+    kong_url = f"http://{private_ip}:9100/{prefix}/{agent_id}"
+    logger.info("Agent ID: %s, Prefix: %s, Kong gateway URL: %s", agent_id, prefix, kong_url)
     return kong_url
 
 

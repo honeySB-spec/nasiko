@@ -95,7 +95,10 @@ Responses appear in real-time, and conversation history is saved automatically.
 Instead of talking to a specific agent, you can let the router pick the best agent for a query:
 
 ```bash
-curl "http://localhost:9100/router/route?query=translate this to French"
+curl -X POST "http://localhost:9100/router" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "session_id=test_session" \
+  -F "query=translate this to French"
 ```
 
 The router analyzes the query, matches it against agent capabilities defined in each agent's `AgentCard.json`, and returns the best match with a confidence score.

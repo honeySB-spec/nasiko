@@ -842,6 +842,7 @@ class AgentAnalyzerTools:
             # Build AgentCard structure
             agentcard = {
                 "protocolVersion": "0.2.9",
+                "id": agent_name.lower().replace(" ", "-"),
                 "name": agent_name,
                 "description": description,
                 "url": f"http://localhost:{port}/",

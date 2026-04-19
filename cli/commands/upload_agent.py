@@ -215,6 +215,7 @@ def list_user_uploaded_agents_command():
         for i, agent in enumerate(agents, 1):
             agent_id = agent.get("agent_id", "N/A")
             agent_name = agent.get("agent_name", "N/A")
+            agent_type = agent.get("artifact_type", "agent")
             description = agent.get("description", "No description")
             url = agent.get("url")
             tags = agent.get("tags", [])
@@ -245,7 +246,7 @@ def list_user_uploaded_agents_command():
                 console.print("      [dim]ID: Not assigned yet[/dim]")
 
             console.print(
-                f"      [{status_color}]{status_icon} {upload_status}[/{status_color}] • [blue]{upload_type.replace('_', ' ').title()}[/blue]"
+                f"      [{status_color}]{status_icon} {upload_status}[/{status_color}] • [blue]{upload_type.replace('_', ' ').title()}[/blue] • [cyan]{agent_type}[/cyan]"
             )
 
             if tags:
